@@ -2,6 +2,12 @@
 
 For the original code see https://github.com/zorn-v/nextcloud-social-login
 
+## Installation
+
+Just install the sociallogin App from Nextcloud App Store, then replace the file nextcloud-social-login/lib/Provider/CustomOAuth2.php with the one from this repo.
+
+After an update, very likely this must be done again, not tested yet.
+
 ## Custom OAuth2/OIDC groups
 
 The custom OAuth2 code has been changed to allow a OAuth2 with PlanningCenter. 
