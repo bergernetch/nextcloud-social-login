@@ -18,28 +18,31 @@ class CustomOAuth2 extends OAuth2
      */
     public function getUserProfile()
     {
-        $profileFields = $this->strToArray($this->config->get('profile_fields'));
         $profileUrl = $this->config->get('endpoints')['profile_url'];
-
-        if (count($profileFields) > 0) {
-            $profileUrl .= (strpos($profileUrl, '?') !== false ? '&' : '?') . 'fields=' . implode(',', $profileFields);
-        }
-
         $response = $this->apiRequest($profileUrl);
-        if (!isset($response->identifier) && isset($response->id)) {
-            $response->identifier = $response->id;
+
+        // PlanningCenter Field Mapping
+        if (isset($response->data->attributes->first_name)) {
+            $response->firstName = $response->data->attributes->first_name; 
         }
-        if (!isset($response->identifier) && isset($response->data->id)) {
-            $response->identifier = $response->data->id;
+        if (isset($response->data->attributes->last_name)) {
+            $response->lastName = $response->data->attributes->last_name; 
         }
-        if (!isset($response->identifier) && isset($response->user_id)) {
-            $response->identifier = $response->user_id;
+        if (isset($response->data->attributes->name)) {
+            $response->displayName = $response->data->attributes->name;    
+        }
+        if (isset($response->data->attributes->avatar)) {    
+            $response->photoURL = $response->data->attributes->avatar; 
+        }
+
+        if (isset($response->data->id)) {
+            $response->identifier = $response->data->id . "_" . $response->lastName . "_" . $response->firstName;
         }
 
         $data = new Data\Collection($response);
 
         if (!$data->exists('identifier')) {
-            throw new UnexpectedApiResponseException('Provider API returned an unexpected response.');
+            throw new UnexpectedApiResponseException('Provider API returned an unexpected response, missing identifier (getUserProfile)');
         }
 
         $userProfile = new User\Profile();
@@ -49,45 +52,42 @@ class CustomOAuth2 extends OAuth2
             }
         }
 
-        if (null !== $groups = $this->getGroups($data)) {
-            $userProfile->data['groups'] = $groups;
-        }
-        if ($groupMapping = $this->config->get('group_mapping')) {
-            $userProfile->data['group_mapping'] = $groupMapping;
-        }
+        // get Groups from PlanningCenter, tab "NextCloud Groups", needs personid
+        $userProfile->data['groups'] = $this->getPlanningCenterGroups($response->data->id);
 
         return $userProfile;
     }
 
-    protected function getGroups(Data\Collection $data)
-    {
-        if ($groupsClaim = $this->config->get('groups_claim')) {
-            $nestedClaims = explode('.', $groupsClaim);
-            $claim = array_shift($nestedClaims);
-            $groups = $data->get($claim);
-            while (count($nestedClaims) > 0) {
-                $claim = array_shift($nestedClaims);
-                if (!isset($groups->{$claim})) {
-                    $groups = [];
-                    break;
-                }
-                $groups = $groups->{$claim};
-            }
-            if (is_array($groups)) {
-                return $groups;
-            } elseif (is_string($groups)) {
-                return $this->strToArray($groups);
-            }
-            return [];
+    protected function getPlanningCenterGroups($personID){
+        // field id can be taken from the pco website where the nextcloud groups are defined.
+        // alternatively from the api explorer/postman
+        $groupFieldDefinitionId = $this->config->get('profile_fields');
+        $groupsURL = "https://api.planningcenteronline.com/people/v2/people/".$personID."/field_data?where[field_definition_id]=".$groupFieldDefinitionId;
+        $response = $this->apiRequest($groupsURL);
+
+        $planningcentergroups = [];
+
+        if ($response === null) {
+            throw new UnexpectedApiResponseException('Planning Center API returned an unexpected response in getPlanningCenterGroups().');
         }
-        return null;
+
+        // loop over array of fields
+        foreach ($response->data as $notusedkey => $field) {
+            // loop over the items
+            foreach ($field as $key => $value) {
+                if($key == "attributes"){
+                    // loop over the items in attributes
+                    foreach ($value as $item => $group) {
+                        // extract the group values
+                        if($item == "value"){
+                            $planningcentergroups[] = $group;
+                        }
+                    }
+                }
+            }
+        }
+
+        return $planningcentergroups;
     }
 
-    private function strToArray($str)
-    {
-        return array_filter(
-            array_map('trim', explode(',', $str)),
-            function ($val) { return $val !== ''; }
-        );
-    }
 }
